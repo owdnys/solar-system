@@ -414,7 +414,7 @@ function boot() {
 
   /* ---------- 贴图 ---------- */
   let loaded = 0;
-  const TOTAL = 9;
+  const TOTAL = 10;
   const barfill = $("barfill");
   function loadTex(url, srgb) {
     return new Promise((resolve, reject) => {
@@ -430,7 +430,7 @@ function boot() {
     });
   }
 
-  /* ---------- 太阳（程序化表面） ---------- */
+  /* ---------- 太阳（8K 贴图 + 程序化耀斑） ---------- */
   const sunVS = [
     "varying vec3 vN; varying vec3 vW; varying vec2 vUv;",
     "void main(){",
@@ -445,6 +445,8 @@ function boot() {
   const sunFS = [
     "varying vec3 vN; varying vec3 vW; varying vec2 vUv;",
     "uniform float uTime;",
+    "uniform sampler2D uSun;",
+    "uniform float uHasTex;",
     "float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }",
     "float noise(vec2 p){",
     "  vec2 i = floor(p), f = fract(p);",
@@ -462,24 +464,33 @@ function boot() {
     "  float n1 = fbm(uv + vec2(uTime*0.03, uTime*0.012));",
     "  float n2 = fbm(uv*2.7 - vec2(uTime*0.05, 0.0));",
     "  float t = n1*0.62 + n2*0.38;",
+    /* 程序化底色（无贴图时的回退） */
     "  vec3 c1 = vec3(0.95, 0.40, 0.07);",
     "  vec3 c2 = vec3(1.0, 0.88, 0.52);",
     "  vec3 c3 = vec3(1.0, 1.0, 0.94);",
-    "  vec3 col = mix(c1, c2, smoothstep(0.30, 0.70, t));",
-    "  col = mix(col, c3, smoothstep(0.68, 0.94, t) * 0.55);",
+    "  vec3 proc = mix(c1, c2, smoothstep(0.30, 0.70, t));",
+    "  proc = mix(proc, c3, smoothstep(0.68, 0.94, t) * 0.55);",
+    /* 8K 贴图 */
+    "  vec3 tex = texture2D(uSun, vUv).rgb;",
+    "  tex = pow(tex, vec3(0.86)) * 1.14;",
+    /* 贴图为主，叠加缓慢流动的耀斑（±18%） */
+    "  vec3 base = mix(proc, tex, uHasTex);",
+    "  float flare = mix(1.0, 0.84 + 0.32 * t, uHasTex);",
+    "  vec3 col = base * flare;",
+    /* 边缘暗化（日面临边昏暗） */
     "  vec3 N = normalize(vN);",
     "  vec3 V = normalize(cameraPosition - vW);",
     "  float lim = 1.0 - abs(dot(N, V));",
     "  col *= 1.0 - pow(lim, 2.4) * 0.5;",
-    "  gl_FragColor = vec4(col * 1.22, 1.0);",
+    "  gl_FragColor = vec4(col * 1.18, 1.0);",
     "}"
   ].join("\n");
 
-  const sunUniforms = { uTime: { value: 0 } };
+  const sunUniforms = { uTime: { value: 0 }, uSun: { value: null }, uHasTex: { value: 0.0 } };
   const sunMat = new THREE.ShaderMaterial({
     uniforms: sunUniforms, vertexShader: sunVS, fragmentShader: sunFS
   });
-  const sun = new THREE.Mesh(new THREE.SphereGeometry(SUN_R, 96, 48), sunMat);
+  const sun = new THREE.Mesh(new THREE.SphereGeometry(SUN_R, 160, 80), sunMat);
   scene.add(sun);
 
   /* ---------- 行星 ---------- */
@@ -517,7 +528,7 @@ function boot() {
       });
       const BRIGHT = { mercury:1.0, venus:0.98, earth:1.16, mars:1.0, jupiter:0.9, saturn:0.72, uranus:0.95, neptune:1.0 };
       mat.color.setScalar(BRIGHT[p.key] || 1.0);
-      const mesh = new THREE.Mesh(new THREE.SphereGeometry(p.radius, 64, 32), mat);
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(p.radius, 128, 64), mat);
       mesh.userData.key = p.key;
       group.add(mesh);
 
@@ -581,12 +592,18 @@ function boot() {
     loadTex(window.PLANET_ASSETS.saturn, true),
     loadTex(window.PLANET_ASSETS.ring, false),
     loadTex(window.PLANET_ASSETS.uranus, true),
-    loadTex(window.PLANET_ASSETS.neptune, true)
+    loadTex(window.PLANET_ASSETS.neptune, true),
+    loadTex(window.PLANET_ASSETS.sun, true)
   ]).then((t) => {
     textures = {
       mercury: t[0], venus: t[1], earth: t[2], mars: t[3],
       jupiter: t[4], saturn: t[5], ring: t[6], uranus: t[7], neptune: t[8]
     };
+    /* 太阳贴上 8K 影像 */
+    if (t[9]) {
+      sunUniforms.uSun.value = t[9];
+      sunUniforms.uHasTex.value = 1.0;
+    }
     build(t[2]);
   }).catch((e) => {
     fatal("贴图加载失败：" + (e && e.message ? e.message : e));
