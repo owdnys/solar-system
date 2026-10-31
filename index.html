@@ -347,7 +347,7 @@ function boot() {
       "void main(){",
       "  vColor = aColor;",
       "  vec4 mv = modelViewMatrix * vec4(position, 1.0);",
-      "  gl_PointSize = max(1.0, aSize * uPixelRatio * (330.0 / max(1.0, -mv.z)));",
+      "  gl_PointSize = max(1.15, aSize * uPixelRatio * (330.0 / max(1.0, -mv.z)));",
       "  gl_Position = projectionMatrix * mv;",
       "  vTwinkle = 0.90 + 0.10 * sin(uTime * 0.9 + aPhase);",
       "}"
@@ -358,8 +358,8 @@ function boot() {
       "void main(){",
       "  vec2 d = gl_PointCoord - 0.5;",
       "  float r = length(d);",
-      "  float a = smoothstep(0.5, 0.02, r);",
-      "  a = pow(a, 1.8);",
+      "  float a = smoothstep(0.50, 0.10, r);",
+      "  a = pow(a, 1.25);",
       "  gl_FragColor = vec4(vColor * vTwinkle, a);",
       "}"
     ].join("\n"),
@@ -409,7 +409,7 @@ function boot() {
     s1.frustumCulled = false; scene.add(s1);
     const s2 = new THREE.Points(geo(28000, { band: true, rMin: 600, rMax: 2400, lum: 1.02, size: 0.95 }), starMat);
     s2.frustumCulled = false; scene.add(s2);
-    const s3 = new THREE.Points(geo(9000, { rMin: 300, rMax: 900, lum: 0.92, size: 0.86 }), starMat);
+    const s3 = new THREE.Points(geo(7000, { rMin: 380, rMax: 1000, lum: 0.92, size: 0.86 }), starMat);
     const s4 = new THREE.Points(geo(420, { rMin: 500, rMax: 1500, lum: 2.2, size: 2.1 }), starMat);
     s4.frustumCulled = false; scene.add(s4);
     s3.frustumCulled = false; scene.add(s3);
