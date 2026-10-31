@@ -405,10 +405,12 @@ function boot() {
       g.setAttribute("aPhase", new THREE.BufferAttribute(phase, 1));
       return g;
     }
-    const s1 = new THREE.Points(geo(3400, { rMin: 400, rMax: 1600, lum: 1.0, size: 1.1 }), starMat);
+    const s1 = new THREE.Points(geo(11000, { rMin: 400, rMax: 1800, lum: 1.05, size: 1.05 }), starMat);
     s1.frustumCulled = false; scene.add(s1);
-    const s2 = new THREE.Points(geo(4600, { band: true, rMin: 600, rMax: 2200, lum: 0.58, size: 0.85 }), starMat);
+    const s2 = new THREE.Points(geo(16000, { band: true, rMin: 600, rMax: 2400, lum: 0.62, size: 0.80 }), starMat);
     s2.frustumCulled = false; scene.add(s2);
+    const s3 = new THREE.Points(geo(5000, { rMin: 300, rMax: 900, lum: 0.55, size: 0.70 }), starMat);
+    s3.frustumCulled = false; scene.add(s3);
   })();
 
   /* ---------- 光照 ---------- */
