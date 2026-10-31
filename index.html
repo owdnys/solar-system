@@ -405,11 +405,13 @@ function boot() {
       g.setAttribute("aPhase", new THREE.BufferAttribute(phase, 1));
       return g;
     }
-    const s1 = new THREE.Points(geo(11000, { rMin: 400, rMax: 1800, lum: 1.05, size: 1.05 }), starMat);
+    const s1 = new THREE.Points(geo(19000, { rMin: 400, rMax: 1800, lum: 1.45, size: 1.18 }), starMat);
     s1.frustumCulled = false; scene.add(s1);
-    const s2 = new THREE.Points(geo(16000, { band: true, rMin: 600, rMax: 2400, lum: 0.62, size: 0.80 }), starMat);
+    const s2 = new THREE.Points(geo(28000, { band: true, rMin: 600, rMax: 2400, lum: 1.02, size: 0.95 }), starMat);
     s2.frustumCulled = false; scene.add(s2);
-    const s3 = new THREE.Points(geo(5000, { rMin: 300, rMax: 900, lum: 0.55, size: 0.70 }), starMat);
+    const s3 = new THREE.Points(geo(9000, { rMin: 300, rMax: 900, lum: 0.92, size: 0.86 }), starMat);
+    const s4 = new THREE.Points(geo(420, { rMin: 500, rMax: 1500, lum: 2.2, size: 2.1 }), starMat);
+    s4.frustumCulled = false; scene.add(s4);
     s3.frustumCulled = false; scene.add(s3);
   })();
 
