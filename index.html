@@ -293,6 +293,8 @@ function boot() {
   renderer.setClearColor(0x03060d, 1);
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.NoToneMapping;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.02, 8000);
@@ -499,6 +501,24 @@ function boot() {
   const pickables = [];
   const MOON_TILT = 0.47; // 土星环倾斜
 
+  /* 土星环：自绘着色器，逐像素计算土星在环上的投影 */
+  const ringUniforms = {
+    uMap: { value: null },
+    uSunPos: { value: new THREE.Vector3(0, 0, 0) },
+    uPlanetPos: { value: new THREE.Vector3() },
+    uPlanetR: { value: 1 },
+    uBright: { value: 1.35 }
+  };
+
+  /* 土星本体着色器用的环影参数（环平面法线 = 受 MOON_TILT 倾斜） */
+  const satUniforms = {
+    uSatPos: { value: new THREE.Vector3() },
+    uSatN: { value: new THREE.Vector3(-Math.sin(MOON_TILT), Math.cos(MOON_TILT), 0).normalize() },
+    uSatR: { value: 1 },
+    uRingIn: { value: 1.28 },
+    uRingOut: { value: 2.32 }
+  };
+
   function ringTexture(tex) {
     // 环纹理 8192×500：宽度方向 = 径向，高度方向 = 角度（纵向恒定）
     const geo = new THREE.RingGeometry(1.28, 2.32, 220, 1);
@@ -511,20 +531,58 @@ function boot() {
       const t = (r - 1.28) / (2.32 - 1.28);
       uv.setXY(i, t, 0.5);
     }
-    const mat = new THREE.MeshStandardMaterial({
-      map: tex,
-      emissiveMap: tex,
-      emissive: new THREE.Color(0xffffff),
-      emissiveIntensity: 1.32,
-      roughness: 1.0,
-      metalness: 0.0,
+    ringUniforms.uMap.value = tex;
+    const mat = new THREE.ShaderMaterial({
+      uniforms: ringUniforms,
+      vertexShader: [
+        "varying vec2 vUv;",
+        "varying vec3 vW;",
+        "void main(){",
+        "  vUv = uv;",
+        "  vec4 wp = modelMatrix * vec4(position, 1.0);",
+        "  vW = wp.xyz;",
+        "  gl_Position = projectionMatrix * viewMatrix * wp;",
+        "}"
+      ].join("\n"),
+      fragmentShader: [
+        "uniform sampler2D uMap;",
+        "uniform vec3 uSunPos;",
+        "uniform vec3 uPlanetPos;",
+        "uniform float uPlanetR;",
+        "uniform float uBright;",
+        "varying vec2 vUv;",
+        "varying vec3 vW;",
+        "void main(){",
+        "  vec4 t = texture2D(uMap, vUv);",
+        "  if (t.a < 0.012) discard;",
+        /* 土星本体在环上的投影：该点朝太阳方向是否被行星球体挡住 */
+        "  vec3 L = normalize(uSunPos - vW);",
+        "  vec3 toP = uPlanetPos - vW;",
+        "  float proj = dot(toP, L);",
+        "  float d = length(toP - L * max(proj, 0.0));",
+        "  float edge = (proj > 0.0) ? smoothstep(uPlanetR * 1.30, uPlanetR * 0.82, d) : 0.0;",
+        "  float shade = mix(1.0, 0.40, edge);",
+        /* 内缘粒子稀薄，略压暗 */
+        "  float radial = smoothstep(0.0, 0.09, vUv.x);",
+        "  vec3 col = t.rgb * uBright * shade * mix(0.6, 1.0, radial);",
+        "  gl_FragColor = vec4(col, t.a * mix(1.0, 0.85, edge));",
+        "}"
+      ].join("\n"),
       transparent: true,
       side: THREE.DoubleSide,
-      depthWrite: false,
-      alphaTest: 0.012,
-      opacity: 1.0
+      depthWrite: false
     });
-    return new THREE.Mesh(geo, mat);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    // 阴影深度材质也要按 alpha 镂空，否则投出来是一整块圆盘
+    mesh.customDepthMaterial = new THREE.MeshDepthMaterial({
+      depthPacking: THREE.RGBADepthPacking,
+      map: tex,
+      alphaTest: 0.012,
+      side: THREE.DoubleSide
+    });
+    return mesh;
   }
 
   function build(earthDay) {
@@ -537,8 +595,45 @@ function boot() {
       });
       const BRIGHT = { mercury:1.0, venus:0.98, earth:1.16, mars:1.0, jupiter:0.9, saturn:0.72, uranus:0.95, neptune:1.0 };
       mat.color.setScalar(BRIGHT[p.key] || 1.0);
+
+      /* 土星：注入环在球面上的投影（逐像素解析，不用 shadowMap） */
+      if (p.key === 'saturn') {
+        mat.onBeforeCompile = (shader) => {
+          Object.assign(shader.uniforms, satUniforms);
+          shader.vertexShader = shader.vertexShader
+            .replace('#include <common>', '#include <common>\nvarying vec3 vRingW;')
+            .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRingW = (modelMatrix * vec4(position, 1.0)).xyz;');
+          shader.fragmentShader = shader.fragmentShader
+            .replace('#include <common>', [
+              '#include <common>',
+              'varying vec3 vRingW;',
+              'uniform vec3 uSatPos;',
+              'uniform vec3 uSatN;',
+              'uniform float uSatR;',
+              'uniform float uRingIn;',
+              'uniform float uRingOut;'
+            ].join('\n'))
+            .replace('#include <output_fragment>', [
+              '#include <output_fragment>',
+              'float ringShade = 1.0;',
+              'vec3 Lsun = normalize(-vRingW);',
+              'float dn = dot(Lsun, uSatN);',
+              'if (abs(dn) > 0.002) {',
+              '  float tt = dot(uSatPos - vRingW, uSatN) / dn;',
+              '  if (tt > 0.0) {',
+              '    vec3 Q = vRingW + Lsun * tt;',
+              '    float rr = length(Q - uSatPos) / uSatR;',
+              '    if (rr > uRingIn && rr < uRingOut) ringShade = 0.58;',
+              '  }',
+              '}',
+              'gl_FragColor.rgb *= ringShade;'
+            ].join('\n'));
+        };
+      }
+
       const mesh = new THREE.Mesh(new THREE.SphereGeometry(p.radius, 128, 64), mat);
       mesh.userData.key = p.key;
+      if (p.key === 'saturn') { mesh.castShadow = true; mesh.receiveShadow = true; }
       group.add(mesh);
 
       if (p.ring) {
@@ -747,7 +842,16 @@ function boot() {
       const ang = Math.atan2(-p.group.position.x, -p.group.position.z);
       let dAng = ((ang - state.tTheta + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
       state.tTheta = state.tTheta + dAng;
-      state.tPhi = p.ring ? 1.13 : 1.24;
+      if (p.ring) {
+        /* 土星：按环平面法线求俯角，让环面始终以约 20–30° 呈现，不会侧成一条线 */
+        const A = -Math.sin(MOON_TILT) * Math.sin(state.tTheta);
+        const B = Math.cos(MOON_TILT);
+        let ph = Math.atan2(A, B);
+        if (ph < 0) ph += Math.PI;
+        state.tPhi = clamp(ph + 0.38, 0.58, 1.28);
+      } else {
+        state.tPhi = 1.24;
+      }
       if (instant) { state.theta = state.tTheta; state.phi = state.tPhi; }
     }
     state.tRadius = radius;
@@ -960,6 +1064,15 @@ function boot() {
       );
       if (p.ring) p.group.rotation.y = 0;
     });
+
+    /* 土星环阴影：环的着色器与本体着色器都需要土星的位置 */
+    const saturn = planetObjects.find((x) => x.key === 'saturn');
+    if (saturn) {
+      ringUniforms.uPlanetPos.value.copy(saturn.group.position);
+      ringUniforms.uPlanetR.value = saturn.radius;
+      satUniforms.uSatPos.value.copy(saturn.group.position);
+      satUniforms.uSatR.value = saturn.radius;
+    }
 
     /* 相机阻尼 + 惯性 */
     if (!state.dragging) {
