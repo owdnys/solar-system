@@ -505,7 +505,8 @@ function boot() {
   const planetObjects = [];
   const orbitLines = [];
   const pickables = [];
-  let moonMesh = null, moonOrbit = null;
+  let moonMesh = null, moonOrbit = null, moonHitRef = null;
+  const _hitTmp = new THREE.Vector3();
   const moonWorld = new THREE.Vector3();
   const MOON_TILT = 0.47; // 土星环倾斜
 
@@ -777,7 +778,17 @@ function boot() {
         moonMesh.rotation.y = Math.PI;   // 潮汐锁定：同一面朝向地球
         moonOrbit.add(moonMesh);
         group.add(moonOrbit);
-        pickables.push(moonMesh);
+
+        /* 月球的点击碰撞体 */
+        const moonHit = new THREE.Mesh(
+          new THREE.SphereGeometry(1, 16, 10),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        moonHit.userData.key = 'moon';
+        moonHit.position.copy(moonMesh.position);
+        moonOrbit.add(moonHit);
+        moonHitRef = moonHit;
+        pickables.push(moonHit);
 
         const mpts = [];
         for (let i = 0; i <= 96; i++) {
@@ -810,12 +821,28 @@ function boot() {
       p.mesh = mesh;
       p.baseTilt = p.key === 'saturn' ? 0 : 0.18;
       planetObjects.push(p);
-      pickables.push(mesh);
+
+      /* 点击碰撞体：透明球，每帧按距离放大，保证远处也点得中 */
+      const hit = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 16, 10),
+        new THREE.MeshBasicMaterial({ visible: false })
+      );
+      hit.userData.key = p.key;
+      group.add(hit);
+      p.hit = hit;
+      pickables.push(hit);
     });
 
     // 地球贴图在 assets 里叫 earth，其余为 key 同名
     sun.userData.key = 'sun';
-    pickables.push(sun);
+    const sunHit = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 16, 10),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    sunHit.userData.key = 'sun';
+    sunHit.scale.setScalar(SUN_R * 1.4);
+    scene.add(sunHit);
+    pickables.push(sunHit);
 
     buildLabels();
     updateTitle('overview');
@@ -1294,6 +1321,22 @@ function boot() {
       state.target.z + state.radius * sp * Math.cos(state.theta)
     );
     camera.lookAt(state.target);
+
+    /* 点击碰撞体：随距离放大，保证屏幕上至少有 24px 的可点半径 */
+    (function updateHitTargets() {
+      const halfH = Math.max(1, window.innerHeight * 0.5);
+      const tanHalf = Math.tan((camera.fov * Math.PI / 180) * 0.5);
+      const grow = (obj, worldR) => {
+        if (!obj) return;
+        obj.updateWorldMatrix(true, false);
+        obj.getWorldPosition(_hitTmp);
+        const d = camera.position.distanceTo(_hitTmp);
+        const minWorld = 24 * (d * tanHalf) / halfH;
+        obj.scale.setScalar(Math.max(worldR * 1.8, minWorld));
+      };
+      planetObjects.forEach((p) => grow(p.hit, p.radius));
+      grow(moonHitRef, 0.17);
+    })();
 
     /* 拖动/缩放时冻结星点闪烁，避免移动中与位移叠加后显得"闪" */
     if (starMat) {
