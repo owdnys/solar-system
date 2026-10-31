@@ -347,9 +347,9 @@ function boot() {
       "void main(){",
       "  vColor = aColor;",
       "  vec4 mv = modelViewMatrix * vec4(position, 1.0);",
-      "  gl_PointSize = aSize * uPixelRatio * (330.0 / max(1.0, -mv.z));",
+      "  gl_PointSize = max(1.0, aSize * uPixelRatio * (330.0 / max(1.0, -mv.z)));",
       "  gl_Position = projectionMatrix * mv;",
-      "  vTwinkle = 0.74 + 0.26 * sin(uTime * 0.9 + aPhase);",
+      "  vTwinkle = 0.90 + 0.10 * sin(uTime * 0.9 + aPhase);",
       "}"
     ].join("\n"),
     fragmentShader: [
@@ -1295,7 +1295,10 @@ function boot() {
     );
     camera.lookAt(state.target);
 
-    if (starMat) starMat.uniforms.uTime.value = state.time;
+    /* 拖动/缩放时冻结星点闪烁，避免移动中与位移叠加后显得"闪" */
+    if (starMat) {
+      if (!state.dragging) starMat.uniforms.uTime.value = state.time;
+    }
     if (state.ready) updateLabels();
     renderer.render(scene, camera);
   }
