@@ -273,6 +273,7 @@ const INFO = {
 PLANETS.forEach((p) => {
   INFO[p.key] = { title: p.name, sub: '直径 ' + p.dia + ' · 距日 ' + p.a.toFixed(2) + ' AU · 公转 ' + p.year };
 });
+INFO.moon = { title: '月球', sub: '直径 3,474.8 km · 距地 384,400 km · 绕地公转 27.3 天' };
 
 /* ══════════════════════════════════════════════════════════════
    2. 启动
@@ -318,6 +319,7 @@ function boot() {
     moved: false,
     pinch: 0,
     followLight: false,
+    moonAngle: 0,
     time: 0
   };
 
@@ -416,7 +418,7 @@ function boot() {
 
   /* ---------- 贴图 ---------- */
   let loaded = 0;
-  const TOTAL = 10;
+  const TOTAL = 11;
   const barfill = $("barfill");
   function loadTex(url, srgb) {
     return new Promise((resolve, reject) => {
@@ -499,6 +501,8 @@ function boot() {
   const planetObjects = [];
   const orbitLines = [];
   const pickables = [];
+  let moonMesh = null, moonOrbit = null;
+  const moonWorld = new THREE.Vector3();
   const MOON_TILT = 0.47; // 土星环倾斜
 
   /* 土星环：自绘着色器，逐像素计算土星在环上的投影 */
@@ -644,6 +648,35 @@ function boot() {
         group.rotation.z = MOON_TILT;
       }
 
+      /* 地球的卫星：月球（轨道相对地球，随地球一起公转） */
+      if (p.key === 'earth') {
+        const moonR = p.radius * 0.2726;
+        const moonD = p.radius * 2.55;
+        moonOrbit = new THREE.Group();
+        moonMesh = new THREE.Mesh(
+          new THREE.SphereGeometry(moonR, 64, 32),
+          new THREE.MeshStandardMaterial({ map: textures.moon, roughness: 1.0, metalness: 0.0, color: 0xb8b8b8 })
+        );
+        moonMesh.userData.key = 'moon';
+        moonMesh.position.set(moonD, 0, 0);
+        moonMesh.rotation.y = Math.PI;   // 潮汐锁定：同一面朝向地球
+        moonOrbit.add(moonMesh);
+        group.add(moonOrbit);
+        pickables.push(moonMesh);
+
+        const mpts = [];
+        for (let i = 0; i <= 96; i++) {
+          const a = (i / 96) * Math.PI * 2;
+          mpts.push(new THREE.Vector3(Math.cos(a) * moonD, 0, Math.sin(a) * moonD));
+        }
+        const mline = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(mpts),
+          new THREE.LineBasicMaterial({ color: 0x6f8fbf, transparent: true, opacity: 0.22, depthWrite: false })
+        );
+        group.add(mline);
+        orbitLines.push(mline);
+      }
+
       // 公转轨道线
       const pts = [];
       for (let i = 0; i <= 128; i++) {
@@ -697,11 +730,13 @@ function boot() {
     loadTex(window.PLANET_ASSETS.ring, true),
     loadTex(window.PLANET_ASSETS.uranus, true),
     loadTex(window.PLANET_ASSETS.neptune, true),
-    loadTex(window.PLANET_ASSETS.sun, true)
+    loadTex(window.PLANET_ASSETS.sun, true),
+    loadTex(window.PLANET_ASSETS.moon, true)
   ]).then((t) => {
     textures = {
       mercury: t[0], venus: t[1], earth: t[2], mars: t[3],
-      jupiter: t[4], saturn: t[5], ring: t[6], uranus: t[7], neptune: t[8]
+      jupiter: t[4], saturn: t[5], ring: t[6], uranus: t[7], neptune: t[8],
+      moon: t[10]
     };
     /* 太阳贴上 8K 影像 */
     if (t[9]) {
@@ -719,6 +754,7 @@ function boot() {
 
   function buildLabels() {
     const items = [{ key: 'sun', name: '太阳', en: 'Sun' }].concat(PLANETS.map((p) => ({ key: p.key, name: p.name, en: p.en })));
+    items.push({ key: 'moon', name: '月球', en: 'Moon' });
     items.forEach((it) => {
       const el = document.createElement('div');
       el.className = 'poi' + (it.key === 'sun' ? ' sun' : '');
@@ -753,13 +789,16 @@ function boot() {
 
     const narrow = window.innerWidth < 720;
     labelItems.forEach((it) => {
-      if (narrow && state.focus === 'overview' && (it.key === 'mercury' || it.key === 'venus' || it.key === 'earth' || it.key === 'mars')) {
+      if (narrow && state.focus === 'overview' && (it.key === 'mercury' || it.key === 'venus' || it.key === 'earth' || it.key === 'mars' || it.key === 'moon')) {
         it.el.style.opacity = '0';
         return;
       }
       let ox = 0, oy = 0;
       if (it.key === 'sun') { _v.set(0, SUN_R * 1.2, 0); oy = -18; }
-      else {
+      else if (it.key === 'moon') {
+        _v.copy(moonWorld);
+        _v.y += 0.14;
+      } else {
         const p = planetObjects.find((x) => x.key === it.key);
         if (!p) return;
         _v.set(p.group.position.x, p.radius * 1.15, p.group.position.z);
@@ -805,6 +844,7 @@ function boot() {
   function buildPills() {
     const list = [{ key: 'overview', name: '全景' }, { key: 'sun', name: '太阳' }]
       .concat(PLANETS.map((p) => ({ key: p.key, name: p.name })));
+    list.push({ key: 'moon', name: '月球' });
     list.forEach((it) => {
       const b = document.createElement('button');
       b.className = 'pill';
@@ -831,6 +871,15 @@ function boot() {
     } else if (key === 'sun') {
       state.tTarget.set(0, 0, 0);
       radius = VIEW.sun.radius;
+    } else if (key === 'moon') {
+      state.tTarget.copy(moonWorld);
+      radius = PORTRAIT ? 3.1 : 1.55;
+      state.followLight = true;
+      const angM = Math.atan2(-moonWorld.x, -moonWorld.z);
+      let dM = ((angM - state.tTheta + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      state.tTheta = state.tTheta + dM;
+      state.tPhi = 1.24;
+      if (instant) { state.theta = state.tTheta; state.phi = state.tPhi; }
     } else {
       const p = planetObjects.find((x) => x.key === key);
       if (!p) return;
@@ -1048,6 +1097,7 @@ function boot() {
     /* 公转 */
     if (state.orbit) {
       PLANETS.forEach((p) => { p.angle += p.orbitSpeed * dt; });
+      state.moonAngle += 0.62 * dt;
     }
     /* 自转 */
     if (state.spin) {
@@ -1064,6 +1114,12 @@ function boot() {
       );
       if (p.ring) p.group.rotation.y = 0;
     });
+
+    /* 月球绕地球（潮汐锁定由 mesh 固定朝向实现） */
+    if (moonOrbit) {
+      moonOrbit.rotation.y = state.moonAngle;
+      moonMesh.getWorldPosition(moonWorld);
+    }
 
     /* 土星环阴影：环的着色器与本体着色器都需要土星的位置 */
     const saturn = planetObjects.find((x) => x.key === 'saturn');
@@ -1089,8 +1145,15 @@ function boot() {
     state.theta = lerp(state.theta, state.tTheta, k);
     state.phi = lerp(state.phi, state.tPhi, k);
 
-    /* 焦点跟随行星 */
-    if (state.focus !== 'overview' && state.focus !== 'sun') {
+    /* 焦点跟随行星 / 月球 */
+    if (state.focus === 'moon' && moonMesh) {
+      state.tTarget.copy(moonWorld);
+      if (state.followLight) {
+        const ang = Math.atan2(-moonWorld.x, -moonWorld.z);
+        const d = ((ang - state.tTheta + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        state.tTheta += d * Math.min(1, dt * 5);
+      }
+    } else if (state.focus !== 'overview' && state.focus !== 'sun') {
       const p = planetObjects.find((x) => x.key === state.focus);
       if (p) {
         state.tTarget.copy(p.group.position);
