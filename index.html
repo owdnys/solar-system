@@ -197,9 +197,9 @@
     <span class="lbl">名称</span><span class="dot"></span>
   </button>
   <span class="sep"></span>
-  <button class="btn" id="b-reset" title="回到全景">
+  <button class="btn" id="b-reset" title="重置视角">
     <svg viewBox="0 0 24 24"><path d="M12 3v3"/><circle cx="12" cy="13" r="7"/><path d="M12 10v3l2 1.4"/></svg>
-    <span class="lbl">全景</span>
+    <span class="lbl">重置</span>
   </button>
   <button class="btn" id="b-full" title="全屏">
     <svg viewBox="0 0 24 24"><path d="M4 9V4h5"/><path d="M20 15v5h-5"/><path d="M15 4h5v5"/><path d="M9 20H4v-5"/></svg>
@@ -418,7 +418,7 @@ function boot() {
 
   /* ---------- 贴图 ---------- */
   let loaded = 0;
-  const TOTAL = 11;
+  const TOTAL = 14;
   const barfill = $("barfill");
   function loadTex(url, srgb) {
     return new Promise((resolve, reject) => {
@@ -589,6 +589,109 @@ function boot() {
     return mesh;
   }
 
+  /* 地球：昼夜 + 云影 + 海面高光（沿用 3D-earth 的着色器，去掉了大气辉光） */
+  let earthMesh = null, earthCloudMesh = null;
+
+  function earthMaterial() {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uDay: { value: textures.earth },
+        uNight: { value: textures.earthNight },
+        uSpec: { value: textures.earthSpec },
+        uCloud: { value: textures.earthCloud },
+        uSunPos: { value: new THREE.Vector3(0, 0, 0) },
+        uNightMix: { value: 1.0 },
+        uCloudShadow: { value: 0.34 },
+        uCloudShift: { value: 0.0 }
+      },
+      vertexShader: [
+        "varying vec3 vN;",
+        "varying vec3 vW;",
+        "varying vec2 vUv;",
+        "void main(){",
+        "  vec4 wp = modelMatrix * vec4(position, 1.0);",
+        "  vW = wp.xyz;",
+        "  vN = normalize(mat3(modelMatrix) * normal);",
+        "  vUv = uv;",
+        "  gl_Position = projectionMatrix * viewMatrix * wp;",
+        "}"
+      ].join("\n"),
+      fragmentShader: [
+        "varying vec3 vN;",
+        "varying vec3 vW;",
+        "varying vec2 vUv;",
+        "uniform sampler2D uDay, uNight, uSpec, uCloud;",
+        "uniform vec3 uSunPos;",
+        "uniform float uNightMix, uCloudShadow, uCloudShift;",
+        "void main(){",
+        "  vec3 N = normalize(vN);",
+        "  vec3 V = normalize(cameraPosition - vW);",
+        "  vec3 L = normalize(uSunPos - vW);",
+        "  float ndl = dot(N, L);",
+        "  float dayAmt = smoothstep(-0.11, 0.24, ndl);",
+        "  vec3 dayC = texture2D(uDay, vUv).rgb;",
+        "  vec3 nightC = texture2D(uNight, vUv).rgb;",
+        "  float ocean = texture2D(uSpec, vUv).r;",
+        "  float diff = max(ndl, 0.0);",
+        "  vec3 lit = dayC * (0.045 + 0.955 * pow(diff, 0.82));",
+        "  float cl = texture2D(uCloud, vec2(vUv.x + uCloudShift, vUv.y)).r;",
+        "  lit *= 1.0 - cl * uCloudShadow * dayAmt;",
+        "  vec3 H = normalize(L + V);",
+        "  float nh = max(dot(N, H), 0.0);",
+        "  float glint = pow(nh, 900.0) * 1.05 + pow(nh, 70.0) * 0.055;",
+        "  lit += vec3(1.0, 0.95, 0.84) * glint * ocean * smoothstep(0.0, 0.09, ndl);",
+        "  vec3 night = vec3(0.010, 0.017, 0.038) + nightC.r * vec3(1.0, 0.86, 0.62) * 2.05 * uNightMix;",
+        "  vec3 col = mix(night, lit, dayAmt);",
+        "  gl_FragColor = vec4(col, 1.0);",
+        "}"
+      ].join("\n")
+    });
+  }
+
+  function earthCloudMaterial() {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uCloud: { value: textures.earthCloud },
+        uSunPos: { value: new THREE.Vector3(0, 0, 0) },
+        uOpacity: { value: 0.92 }
+      },
+      vertexShader: [
+        "varying vec3 vN;",
+        "varying vec3 vW;",
+        "varying vec2 vUv;",
+        "void main(){",
+        "  vec4 wp = modelMatrix * vec4(position, 1.0);",
+        "  vW = wp.xyz;",
+        "  vN = normalize(mat3(modelMatrix) * normal);",
+        "  vUv = uv;",
+        "  gl_Position = projectionMatrix * viewMatrix * wp;",
+        "}"
+      ].join("\n"),
+      fragmentShader: [
+        "varying vec3 vN;",
+        "varying vec3 vW;",
+        "varying vec2 vUv;",
+        "uniform sampler2D uCloud;",
+        "uniform vec3 uSunPos;",
+        "uniform float uOpacity;",
+        "void main(){",
+        "  vec3 N = normalize(vN);",
+        "  vec3 L = normalize(uSunPos - vW);",
+        "  float d = texture2D(uCloud, vUv).r;",
+        "  if (d < 0.004) discard;",
+        "  float ndl = dot(N, L);",
+        "  float lit = smoothstep(-0.28, 0.34, ndl);",
+        "  vec3 c = mix(vec3(0.028, 0.042, 0.075), vec3(1.0), lit);",
+        "  float term = clamp(1.0 - abs(ndl) * 3.4, 0.0, 1.0);",
+        "  c = mix(c, vec3(1.0, 0.70, 0.48), term * 0.42);",
+        "  gl_FragColor = vec4(c, d * uOpacity);",
+        "}"
+      ].join("\n"),
+      transparent: true,
+      depthWrite: false
+    });
+  }
+
   function build(earthDay) {
     PLANETS.forEach((p) => {
       const group = new THREE.Group();
@@ -635,7 +738,7 @@ function boot() {
         };
       }
 
-      const mesh = new THREE.Mesh(new THREE.SphereGeometry(p.radius, 128, 64), mat);
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(p.radius, 128, 64), p.key === 'earth' ? earthMaterial() : mat);
       mesh.userData.key = p.key;
       if (p.key === 'saturn') { mesh.castShadow = true; mesh.receiveShadow = true; }
       group.add(mesh);
@@ -650,6 +753,14 @@ function boot() {
 
       /* 地球的卫星：月球（轨道相对地球，随地球一起公转） */
       if (p.key === 'earth') {
+        /* 独立云层（半透明，随地球自转并缓慢漂移） */
+        earthMesh = mesh;
+        earthCloudMesh = new THREE.Mesh(
+          new THREE.SphereGeometry(p.radius * 1.008, 96, 48),
+          earthCloudMaterial()
+        );
+        group.add(earthCloudMesh);
+
         const moonR = p.radius * 0.2726;
         const moonD = p.radius * 2.55;
         moonOrbit = new THREE.Group();
@@ -731,12 +842,16 @@ function boot() {
     loadTex(window.PLANET_ASSETS.uranus, true),
     loadTex(window.PLANET_ASSETS.neptune, true),
     loadTex(window.PLANET_ASSETS.sun, true),
-    loadTex(window.PLANET_ASSETS.moon, true)
+    loadTex(window.PLANET_ASSETS.moon, true),
+    loadTex(window.PLANET_ASSETS.earthNight, true),
+    loadTex(window.PLANET_ASSETS.earthCloud, false),
+    loadTex(window.PLANET_ASSETS.earthSpec, false)
   ]).then((t) => {
     textures = {
       mercury: t[0], venus: t[1], earth: t[2], mars: t[3],
       jupiter: t[4], saturn: t[5], ring: t[6], uranus: t[7], neptune: t[8],
-      moon: t[10]
+      moon: t[10],
+      earthNight: t[11], earthCloud: t[12], earthSpec: t[13]
     };
     /* 太阳贴上 8K 影像 */
     if (t[9]) {
@@ -1103,6 +1218,7 @@ function boot() {
     if (state.spin) {
       PLANETS.forEach((p) => { p.mesh.rotation.y += p.spinSpeed * dt; });
       sun.rotation.y += 0.03 * dt;
+      if (earthCloudMesh) earthCloudMesh.rotation.y += (2 * Math.PI / 24) * 1.12 * dt;
     }
 
     /* 行星位置 */
